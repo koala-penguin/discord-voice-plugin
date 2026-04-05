@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """
 PostToolUse hook for voice_play — runs asynchronously in the background.
-Waits up to 60 seconds for the next queued voice message, then exits 2
-to inject it as a new turn (asyncRewake). Each voice_play call kicks off
-a new watcher, keeping the voice conversation alive without text input.
+Waits up to 10 minutes for the next queued voice or text message, then
+exits 2 to inject it as a new turn (asyncRewake). Each voice_play call
+kicks off a new watcher, keeping the conversation alive without text input.
 """
 import os, json, glob, sys, time
 
-inbox = os.path.join(os.path.expanduser('~'), '.claude', 'channels', 'discord', 'voice-inbox')
-WAIT_FILE = os.path.join(inbox, '00_wait.json')
-WATCHER_PID_FILE = os.path.join(inbox, '00_watcher.pid')
+voice_inbox = os.path.join(os.path.expanduser('~'), '.claude', 'channels', 'discord', 'voice-inbox')
+text_inbox = os.path.join(os.path.expanduser('~'), '.claude', 'channels', 'discord', 'text-inbox')
+WAIT_FILE = os.path.join(voice_inbox, '00_wait.json')
+WATCHER_PID_FILE = os.path.join(voice_inbox, '00_watcher.pid')
+inbox = voice_inbox  # kept for PID file logic below
 
 def is_real_message(path):
     return not os.path.basename(path).startswith('00_')
 
-def deliver_first():
-    files = sorted(f for f in glob.glob(os.path.join(inbox, '*.json')) if is_real_message(f))
+def deliver_first_voice():
+    files = sorted(f for f in glob.glob(os.path.join(voice_inbox, '*.json')) if is_real_message(f))
     if not files:
         return False
     try:
@@ -26,6 +28,26 @@ def deliver_first():
         return True
     except Exception:
         return False
+
+def deliver_first_text():
+    files = sorted(glob.glob(os.path.join(text_inbox, '*.json')))
+    if not files:
+        return False
+    try:
+        with open(files[0]) as f:
+            d = json.load(f)
+        os.remove(files[0])
+        att_attrs = ''
+        if d.get('attachment_count'):
+            att_attrs = ' attachment_count="{attachment_count}" attachments="{attachments}"'.format(**d)
+        print('<channel source="discord" chat_id="{chat_id}" message_id="{message_id}" user="{user}" ts="{ts}"{att}>{content}</channel>'.format(att=att_attrs, **d))
+        return True
+    except Exception:
+        return False
+
+def deliver_first():
+    """Check text first (instant messages), then voice."""
+    return deliver_first_text() or deliver_first_voice()
 
 os.makedirs(inbox, exist_ok=True)
 

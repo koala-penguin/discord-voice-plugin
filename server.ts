@@ -1411,6 +1411,24 @@ async function handleInbound(msg: Message): Promise<void> {
   // forgeable by any allowlisted sender typing that string.
   const content = msg.content || (atts.length > 0 ? '(attachment)' : '')
 
+  // Write to text inbox for poll-based delivery (MCP push notifications
+  // are not reliably delivered in CLI sessions).
+  try {
+    const textInboxDir = join(STATE_DIR, 'text-inbox')
+    mkdirSync(textInboxDir, { recursive: true })
+    writeFileSync(join(textInboxDir, `${Date.now()}.json`), JSON.stringify({
+      content,
+      chat_id,
+      message_id: msg.id,
+      user: msg.author.username,
+      ts: msg.createdAt.toISOString(),
+      ...(atts.length > 0 ? { attachment_count: String(atts.length), attachments: atts.join('; ') } : {}),
+    }))
+  } catch (err) {
+    process.stderr.write(`discord channel: failed to queue text message: ${err}\n`)
+  }
+
+  // Also try MCP push notification (works in desktop app).
   mcp.notification({
     method: 'notifications/claude/channel',
     params: {
