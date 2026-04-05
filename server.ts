@@ -528,56 +528,92 @@ async function runASR(audioPath: string): Promise<string | null> {
   }
 }
 
-async function generateTTS(text: string, voice?: string, clone?: string, lang?: string, speed?: number): Promise<string> {
+async function generateTTSLocal(text: string, clone: string, lang?: string, speed?: number): Promise<string> {
+  const refPath = join(homedir(), 'projects', 'voice-refs', `${clone}.mp3`)
+  try { statSync(refPath) } catch {
+    throw new Error(`Voice "${clone}" not found locally at ${refPath}`)
+  }
+  const prefix = join(VOICE_DIR, `tts-local-${Date.now()}`)
+  const args = [
+    '-m', 'mlx_audio.tts.generate',
+    '--model', `${homedir()}/.omlx/models/Qwen3-TTS-12Hz-1.7B-Base-bf16`,
+    '--text', text,
+    '--ref_audio', refPath,
+    '--file_prefix', prefix,
+  ]
+  if (lang) args.push('--lang_code', lang)
+  if (speed) args.push('--speed', String(speed))
+  process.stderr.write('discord voice: using local MLX TTS\n')
+  const result = await runCommand(`${homedir()}/.venvs/qwen-tts/bin/python`, args)
+  if (result.code !== 0) {
+    throw new Error(`Local MLX TTS failed (exit ${result.code}): ${result.stderr.slice(-200)}`)
+  }
+  return `${prefix}_000.wav`
+}
+
+async function generateTTS(text: string, voice?: string, clone?: string, lang?: string, speed?: number, local?: boolean): Promise<string> {
   if (clone) {
-    // Voice clone via GPU TTS server
-    const outPath = join(VOICE_DIR, `tts-${Date.now()}.wav`)
-    const cloneLang = lang ?? 'en'
-    const cloneSpeed = speed ?? 1.0
+    // If local flag set, skip GPU server entirely
+    if (local) return generateTTSLocal(text, clone, lang, speed)
 
-    // Try /generate first (pre-loaded voices, faster)
-    const res = await fetch(`${VOICE_CLONE_SERVER}/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, voice: clone, lang: cloneLang, speed: cloneSpeed }),
-    })
+    try {
+      // Voice clone via GPU TTS server
+      const outPath = join(VOICE_DIR, `tts-${Date.now()}.wav`)
+      const cloneLang = lang ?? 'en'
+      const cloneSpeed = speed ?? 1.0
 
-    if (res.ok) {
-      writeFileSync(outPath, Buffer.from(await res.arrayBuffer()))
-      return outPath
-    }
-
-    // Fallback to /generate_custom if voice not pre-loaded on server
-    if (res.status === 404) {
-      const refPath = join(homedir(), 'projects', 'voice-refs', `${clone}.mp3`)
-      try { statSync(refPath) } catch {
-        throw new Error(`Voice "${clone}" not found on server or locally at ${refPath}`)
-      }
-      const refTextPath = join(homedir(), 'projects', 'voice-refs', `${clone}.ref_text.txt`)
-      let refText: string | undefined
-      try { refText = readFileSync(refTextPath, 'utf8').trim() } catch {}
-
-      const form = new FormData()
-      form.append('text', text)
-      form.append('lang', cloneLang)
-      form.append('speed', String(cloneSpeed))
-      form.append('ref_audio', new Blob([readFileSync(refPath)]), `${clone}.mp3`)
-      if (refText) form.append('ref_text', refText)
-
-      const res2 = await fetch(`${VOICE_CLONE_SERVER}/generate_custom`, {
+      // Try /generate first (pre-loaded voices, faster)
+      const res = await fetch(`${VOICE_CLONE_SERVER}/generate`, {
         method: 'POST',
-        body: form,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice: clone, lang: cloneLang, speed: cloneSpeed }),
       })
-      if (!res2.ok) {
-        const err = await res2.json().catch(() => ({ detail: res2.statusText }))
-        throw new Error(`Clone TTS custom failed (${res2.status}): ${(err as any).detail ?? res2.statusText}`)
-      }
-      writeFileSync(outPath, Buffer.from(await res2.arrayBuffer()))
-      return outPath
-    }
 
-    const err = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(`Clone TTS failed (${res.status}): ${(err as any).detail ?? res.statusText}`)
+      if (res.ok) {
+        writeFileSync(outPath, Buffer.from(await res.arrayBuffer()))
+        return outPath
+      }
+
+      // Fallback to /generate_custom if voice not pre-loaded on server
+      if (res.status === 404) {
+        const refPath = join(homedir(), 'projects', 'voice-refs', `${clone}.mp3`)
+        try { statSync(refPath) } catch {
+          throw new Error(`Voice "${clone}" not found on server or locally at ${refPath}`)
+        }
+        const refTextPath = join(homedir(), 'projects', 'voice-refs', `${clone}.ref_text.txt`)
+        let refText: string | undefined
+        try { refText = readFileSync(refTextPath, 'utf8').trim() } catch {}
+
+        const form = new FormData()
+        form.append('text', text)
+        form.append('lang', cloneLang)
+        form.append('speed', String(cloneSpeed))
+        form.append('ref_audio', new Blob([readFileSync(refPath)]), `${clone}.mp3`)
+        if (refText) form.append('ref_text', refText)
+
+        const res2 = await fetch(`${VOICE_CLONE_SERVER}/generate_custom`, {
+          method: 'POST',
+          body: form,
+        })
+        if (!res2.ok) {
+          const err = await res2.json().catch(() => ({ detail: res2.statusText }))
+          throw new Error(`Clone TTS custom failed (${res2.status}): ${(err as any).detail ?? res2.statusText}`)
+        }
+        writeFileSync(outPath, Buffer.from(await res2.arrayBuffer()))
+        return outPath
+      }
+
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(`Clone TTS failed (${res.status}): ${(err as any).detail ?? res.statusText}`)
+    } catch (err: any) {
+      // If ref audio doesn't exist locally, local fallback can't help — re-throw as-is
+      const refPath = join(homedir(), 'projects', 'voice-refs', `${clone}.mp3`)
+      let hasLocalRef = false
+      try { statSync(refPath); hasLocalRef = true } catch {}
+      if (!hasLocalRef) throw err
+      // GPU server error but we have local ref — suggest local fallback
+      throw new Error(`GPU TTS server unavailable (${err.message}). Local MLX fallback is available — retry with local=true to use it (slower, ~30-45s).`)
+    }
   }
 
   // Default: edge-tts
@@ -895,7 +931,7 @@ function handleVoiceLeave(guildId: string): string {
   return 'Left voice channel.'
 }
 
-async function handleVoicePlay(guildId: string, text: string, voice?: string, filePath?: string, clone?: string, lang?: string, speed?: number): Promise<string> {
+async function handleVoicePlay(guildId: string, text: string, voice?: string, filePath?: string, clone?: string, lang?: string, speed?: number, local?: boolean): Promise<string> {
   const session = voiceSessions.get(guildId)
   if (!session) throw new Error('Not in a voice channel. Use voice_join first.')
 
@@ -907,8 +943,8 @@ async function handleVoicePlay(guildId: string, text: string, voice?: string, fi
     audioPath = filePath
     cleanup = false
   } else {
-    // Generate TTS (clone voice via GPU server, or edge-tts)
-    audioPath = await generateTTS(text, voice, clone, lang, speed)
+    // Generate TTS (clone voice via GPU server, or edge-tts; local=true forces local MLX)
+    audioPath = await generateTTS(text, voice, clone, lang, speed, local)
   }
 
   const resource = createAudioResource(audioPath)
@@ -1171,6 +1207,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           clone: { type: 'string', description: 'Voice clone name (e.g. "uncle_roger", "trump"). Uses GPU TTS server instead of edge-tts.' },
           lang: { type: 'string', description: 'Language code for clone voice (default: "en"). Supported: en, ko, zh, ja, de, fr, etc.' },
           speed: { type: 'number', description: 'Playback speed for clone voice (default: 1.0, range: 0.25-4.0)' },
+          local: { type: 'boolean', description: 'Use local MLX model instead of GPU server. Slower (~30-45s) but works when GPU server is unavailable.' },
           file: { type: 'string', description: 'Absolute path to an audio file to play directly' },
         },
         required: ['guild_id'],
@@ -1325,8 +1362,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const clone = args.clone as string | undefined
         const lang = args.lang as string | undefined
         const speed = args.speed as number | undefined
+        const local = args.local as boolean | undefined
         if (!text && !file) throw new Error('Provide either text (for TTS) or file (for audio playback)')
-        const result = await handleVoicePlay(guild_id, text ?? '', voice, file, clone, lang, speed)
+        const result = await handleVoicePlay(guild_id, text ?? '', voice, file, clone, lang, speed, local)
         return { content: [{ type: 'text', text: result }] }
       }
       case 'voice_clone_create': {
