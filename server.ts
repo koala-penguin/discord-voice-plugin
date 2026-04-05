@@ -469,6 +469,7 @@ async function fetchAllowedChannel(id: string) {
 const VOICE_DIR = join(STATE_DIR, 'voice')
 const VOICE_SILENCE_MS = parseInt(process.env.VOICE_SILENCE_MS ?? '1500', 10)
 const VOICE_TTS_VOICE = process.env.VOICE_TTS_VOICE ?? 'ko-KR-InJoonNeural'
+const VOICE_CLONE_SERVER = process.env.VOICE_CLONE_SERVER ?? 'http://192.168.50.28:8880'
 const VOICE_ASR_MODEL = process.env.VOICE_ASR_MODEL ?? `${homedir()}/.omlx/models/Qwen3-ASR-1.7B-bf16`
 const VOICE_ASR_PYTHON = process.env.VOICE_ASR_PYTHON ?? `${homedir()}/.venvs/qwen-tts/bin/python`
 
@@ -527,7 +528,59 @@ async function runASR(audioPath: string): Promise<string | null> {
   }
 }
 
-async function generateTTS(text: string, voice?: string): Promise<string> {
+async function generateTTS(text: string, voice?: string, clone?: string, lang?: string, speed?: number): Promise<string> {
+  if (clone) {
+    // Voice clone via GPU TTS server
+    const outPath = join(VOICE_DIR, `tts-${Date.now()}.wav`)
+    const cloneLang = lang ?? 'en'
+    const cloneSpeed = speed ?? 1.0
+
+    // Try /generate first (pre-loaded voices, faster)
+    const res = await fetch(`${VOICE_CLONE_SERVER}/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice: clone, lang: cloneLang, speed: cloneSpeed }),
+    })
+
+    if (res.ok) {
+      writeFileSync(outPath, Buffer.from(await res.arrayBuffer()))
+      return outPath
+    }
+
+    // Fallback to /generate_custom if voice not pre-loaded on server
+    if (res.status === 404) {
+      const refPath = join(homedir(), 'projects', 'voice-refs', `${clone}.mp3`)
+      try { statSync(refPath) } catch {
+        throw new Error(`Voice "${clone}" not found on server or locally at ${refPath}`)
+      }
+      const refTextPath = join(homedir(), 'projects', 'voice-refs', `${clone}.ref_text.txt`)
+      let refText: string | undefined
+      try { refText = readFileSync(refTextPath, 'utf8').trim() } catch {}
+
+      const form = new FormData()
+      form.append('text', text)
+      form.append('lang', cloneLang)
+      form.append('speed', String(cloneSpeed))
+      form.append('ref_audio', new Blob([readFileSync(refPath)]), `${clone}.mp3`)
+      if (refText) form.append('ref_text', refText)
+
+      const res2 = await fetch(`${VOICE_CLONE_SERVER}/generate_custom`, {
+        method: 'POST',
+        body: form,
+      })
+      if (!res2.ok) {
+        const err = await res2.json().catch(() => ({ detail: res2.statusText }))
+        throw new Error(`Clone TTS custom failed (${res2.status}): ${(err as any).detail ?? res2.statusText}`)
+      }
+      writeFileSync(outPath, Buffer.from(await res2.arrayBuffer()))
+      return outPath
+    }
+
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(`Clone TTS failed (${res.status}): ${(err as any).detail ?? res.statusText}`)
+  }
+
+  // Default: edge-tts
   const outPath = join(VOICE_DIR, `tts-${Date.now()}.mp3`)
   await runCommand('/usr/bin/python3', [
     '-m', 'edge_tts',
@@ -842,7 +895,7 @@ function handleVoiceLeave(guildId: string): string {
   return 'Left voice channel.'
 }
 
-async function handleVoicePlay(guildId: string, text: string, voice?: string, filePath?: string): Promise<string> {
+async function handleVoicePlay(guildId: string, text: string, voice?: string, filePath?: string, clone?: string, lang?: string, speed?: number): Promise<string> {
   const session = voiceSessions.get(guildId)
   if (!session) throw new Error('Not in a voice channel. Use voice_join first.')
 
@@ -854,8 +907,8 @@ async function handleVoicePlay(guildId: string, text: string, voice?: string, fi
     audioPath = filePath
     cleanup = false
   } else {
-    // Generate TTS
-    audioPath = await generateTTS(text, voice)
+    // Generate TTS (clone voice via GPU server, or edge-tts)
+    audioPath = await generateTTS(text, voice, clone, lang, speed)
   }
 
   const resource = createAudioResource(audioPath)
@@ -1095,16 +1148,33 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'voice_play',
-      description: 'Play audio in the current voice channel. Provide text for TTS, or file for direct audio playback (mp3/wav/ogg).',
+      description: 'Play audio in the current voice channel. Provide text for TTS (edge-tts default), clone for GPU voice clone, or file for direct playback.',
       inputSchema: {
         type: 'object',
         properties: {
           guild_id: { type: 'string', description: 'The guild ID where the bot is in voice' },
           text: { type: 'string', description: 'The text to speak (for TTS)' },
-          voice: { type: 'string', description: 'TTS voice (default: ko-KR-InJoonNeural)' },
+          voice: { type: 'string', description: 'Edge-TTS voice name (default: ko-KR-InJoonNeural). Ignored when clone is set.' },
+          clone: { type: 'string', description: 'Voice clone name (e.g. "uncle_roger", "trump"). Uses GPU TTS server instead of edge-tts.' },
+          lang: { type: 'string', description: 'Language code for clone voice (default: "en"). Supported: en, ko, zh, ja, de, fr, etc.' },
+          speed: { type: 'number', description: 'Playback speed for clone voice (default: 1.0, range: 0.25-4.0)' },
           file: { type: 'string', description: 'Absolute path to an audio file to play directly' },
         },
         required: ['guild_id'],
+      },
+    },
+    {
+      name: 'voice_clone_create',
+      description: 'Register a new cloned voice from a reference audio clip (~15 sec recommended). Provide a local file path or a YouTube URL (audio will be downloaded). The voice can then be used with voice_play clone parameter.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Voice name (lowercase, no spaces, e.g. "morgan_freeman")' },
+          file: { type: 'string', description: 'Absolute path to a local audio file (mp3/wav)' },
+          url: { type: 'string', description: 'YouTube URL to download audio from (extracts ~15s clip)' },
+          ref_text: { type: 'string', description: 'Transcript of the reference audio. Required for Korean ref audio.' },
+        },
+        required: ['name'],
       },
     },
   ],
@@ -1239,9 +1309,66 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const text = args.text as string | undefined
         const voice = args.voice as string | undefined
         const file = args.file as string | undefined
+        const clone = args.clone as string | undefined
+        const lang = args.lang as string | undefined
+        const speed = args.speed as number | undefined
         if (!text && !file) throw new Error('Provide either text (for TTS) or file (for audio playback)')
-        const result = await handleVoicePlay(guild_id, text ?? '', voice, file)
+        const result = await handleVoicePlay(guild_id, text ?? '', voice, file, clone, lang, speed)
         return { content: [{ type: 'text', text: result }] }
+      }
+      case 'voice_clone_create': {
+        const name = (args.name as string).toLowerCase().replace(/[^a-z0-9_]/g, '_')
+        const file = args.file as string | undefined
+        const url = args.url as string | undefined
+        const ref_text = args.ref_text as string | undefined
+
+        if (!file && !url) throw new Error('Provide either file (local path) or url (YouTube URL)')
+
+        const VOICE_REFS_DIR = join(homedir(), 'projects', 'voice-refs')
+        mkdirSync(VOICE_REFS_DIR, { recursive: true })
+        const destPath = join(VOICE_REFS_DIR, `${name}.mp3`)
+
+        if (url) {
+          // Download audio from YouTube via yt-dlp
+          const tmpPath = join(VOICE_DIR, `yt-${Date.now()}`)
+          mkdirSync(VOICE_DIR, { recursive: true })
+          await runCommand('/opt/homebrew/bin/yt-dlp', [
+            '-x', '--audio-format', 'mp3',
+            '--audio-quality', '0',
+            '-o', `${tmpPath}.%(ext)s`,
+            url,
+          ])
+          // yt-dlp outputs to tmpPath.mp3
+          const ytOut = `${tmpPath}.mp3`
+          try {
+            renameSync(ytOut, destPath)
+          } catch {
+            throw new Error(`yt-dlp download failed — output file not found at ${ytOut}`)
+          }
+        } else if (file) {
+          // Copy local file to voice-refs
+          const srcBuf = readFileSync(file)
+          writeFileSync(destPath, srcBuf)
+        }
+
+        // Verify the file exists and has content
+        const stat = statSync(destPath)
+        if (stat.size < 1000) throw new Error(`Reference audio too small (${stat.size} bytes) — need ~15 sec clip`)
+
+        // Save ref_text as sidecar file if provided
+        if (ref_text) {
+          writeFileSync(join(VOICE_REFS_DIR, `${name}.ref_text.txt`), ref_text, 'utf8')
+        }
+
+        const info = [
+          `Voice "${name}" saved to ${destPath} (${(stat.size / 1024).toFixed(0)}KB).`,
+          ref_text ? `ref_text saved to ${name}.ref_text.txt.` : `No ref_text provided (required for Korean refs).`,
+          `Use with: voice_play clone="${name}"`,
+          `Note: For best speed, add this voice to the GPU server config and restart it to pre-cache the voice prompt.`,
+          `Until then, you can use it via generate_custom by passing the file path.`,
+        ]
+
+        return { content: [{ type: 'text', text: info.join('\n') }] }
       }
       default:
         return {
