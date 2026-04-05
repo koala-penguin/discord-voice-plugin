@@ -103,7 +103,8 @@ The key fix. Triggered via `PostToolUse` on `mcp__discord-voice__voice_play` wit
 | `~/.claude/plugins/lib/discord-voice/server.ts` | Plugin — writes to voice-inbox on ASR result |
 | `~/.claude/channels/discord/voice-inbox/` | Queue directory for transcriptions |
 | `~/.claude/channels/discord/voice-poll.py` | Stop hook — catches messages during text turns |
-| `~/.claude/channels/discord/voice-inbox-watcher.py` | PostToolUse hook — background listener loop |
+| `~/.claude/channels/discord/voice-inbox-watcher.py` | PostToolUse hook — 10 min voice listener |
+| `~/.claude/channels/discord/text-inbox-watcher.py` | SessionStart hook — persistent text listener |
 | `~/.claude/settings.json` | Hook configuration |
 
 ---
@@ -157,21 +158,31 @@ writeFileSync(join(textInboxDir, `${Date.now()}.json`), JSON.stringify({
 }))
 ```
 
-### text-poll.py — Stop Hook
+### Watcher Architecture (two separate watchers)
 
-`~/.claude/channels/discord/text-poll.py` — instant check of `text-inbox/`, no polling needed. Prints `<channel source="discord" ...>` tag.
+**text-inbox-watcher.py** — persistent, runs indefinitely from SessionStart. Polls `text-inbox/` every 2 seconds. Own PID file (`00_text_watcher.pid`). When a message arrives, prints `<channel source="discord" ...>` and exits 2 (asyncRewake).
 
-### voice-inbox-watcher.py — Updated
+**voice-inbox-watcher.py** — temporary (10 min timeout), started by PostToolUse on `voice_play` or `reply`. Polls `voice-inbox/` every second. Own PID file (`00_watcher.pid`).
 
-The background watcher now checks **both** `text-inbox/` and `voice-inbox/` during its 10-minute poll loop. Text messages are checked first (higher priority — instant delivery).
+**text-poll.py** — Stop hook, instant check of `text-inbox/` as fallback (catches messages if the persistent watcher dies).
 
-### PostToolUse — Reply Hook
+### Text DM reactivates voice listener
 
-A second PostToolUse hook fires on `mcp__discord-voice__reply`, starting the same watcher. This ensures the loop continues after text replies, not just voice_play calls.
+When a text DM arrives while the voice watcher has timed out:
+1. `text-inbox-watcher.py` delivers the message → asyncRewake
+2. Claude processes it → calls `reply` tool
+3. PostToolUse on `reply` starts `voice-inbox-watcher.py`
+4. Voice conversation is reactivated without needing to be at the terminal
 
 ### Updated hooks in settings.json
 
 ```json
+"SessionStart": [{
+  "hooks": [
+    { "type": "command", "command": "sleep 10 && echo '...' && exit 2", "asyncRewake": true },
+    { "type": "command", "command": "python3 $HOME/.claude/channels/discord/text-inbox-watcher.py", "asyncRewake": true }
+  ]
+}],
 "PostToolUse": [
   {
     "matcher": "mcp__discord-voice__voice_play",

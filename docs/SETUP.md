@@ -206,8 +206,10 @@ for _ in range(poll_secs):
 sys.exit(0)
 ```
 
-### 4b. voice-inbox-watcher.py
+### 4b. voice-inbox-watcher.py (temporary, 10 min)
 `~/.claude/channels/discord/voice-inbox-watcher.py`
+
+Started by PostToolUse on `voice_play` or `reply`. Polls voice-inbox only, times out after 10 minutes.
 
 ```python
 #!/usr/bin/env python3
@@ -267,6 +269,60 @@ except Exception:
 sys.exit(0)
 ```
 
+### 4c. text-inbox-watcher.py (persistent)
+`~/.claude/channels/discord/text-inbox-watcher.py`
+
+Started by SessionStart. Runs **indefinitely**, polling text-inbox every 2 seconds. Ensures text DMs are always delivered, even when away from the terminal. When a text message triggers a `reply`, the PostToolUse hook restarts the voice watcher — so text DMs reactivate the voice listener.
+
+```python
+#!/usr/bin/env python3
+import os, json, glob, sys, time, signal
+
+text_inbox = os.path.join(os.path.expanduser('~'), '.claude', 'channels', 'discord', 'text-inbox')
+PID_FILE = os.path.join(text_inbox, '00_text_watcher.pid')
+
+os.makedirs(text_inbox, exist_ok=True)
+
+my_pid = os.getpid()
+try:
+    old_pid = int(open(PID_FILE).read().strip())
+    if old_pid != my_pid:
+        try: os.kill(old_pid, 9)
+        except: pass
+except Exception:
+    pass
+with open(PID_FILE, 'w') as f:
+    f.write(str(my_pid))
+
+def deliver_first():
+    files = sorted(glob.glob(os.path.join(text_inbox, '*.json')))
+    if not files:
+        return False
+    try:
+        with open(files[0]) as f:
+            d = json.load(f)
+        os.remove(files[0])
+        att_attrs = ''
+        if d.get('attachment_count'):
+            att_attrs = ' attachment_count="{attachment_count}" attachments="{attachments}"'.format(**d)
+        print('<channel source="discord" chat_id="{chat_id}" message_id="{message_id}" user="{user}" ts="{ts}"{att}>{content}</channel>'.format(att=att_attrs, **d))
+        return True
+    except Exception:
+        return False
+
+# Poll indefinitely
+while True:
+    time.sleep(2)
+    try:
+        current_pid = int(open(PID_FILE).read().strip())
+        if current_pid != my_pid:
+            sys.exit(0)
+    except Exception:
+        pass
+    if deliver_first():
+        sys.exit(2)
+```
+
 ---
 
 ## Step 5: Configure Claude Code Settings
@@ -290,11 +346,18 @@ sys.exit(0)
   },
   "hooks": {
     "SessionStart": [{
-      "hooks": [{
-        "type": "command",
-        "command": "sleep 10 && echo 'System: Join Discord voice channel now. Call mcp__discord-voice__voice_join with channel_id=VOICE_CHANNEL_ID guild_id=GUILD_ID text_channel_id=TEXT_CHANNEL_ID. After joining, immediately call voice_play with a short greeting to activate the voice listener loop.' && exit 2",
-        "asyncRewake": true
-      }]
+      "hooks": [
+        {
+          "type": "command",
+          "command": "sleep 10 && echo 'System: Join Discord voice channel now. Call mcp__discord-voice__voice_join with channel_id=VOICE_CHANNEL_ID guild_id=GUILD_ID text_channel_id=TEXT_CHANNEL_ID. After joining, immediately call voice_play with a short greeting to activate the voice listener loop.' && exit 2",
+          "asyncRewake": true
+        },
+        {
+          "type": "command",
+          "command": "python3 $HOME/.claude/channels/discord/text-inbox-watcher.py",
+          "asyncRewake": true
+        }
+      ]
     }],
     "PostToolUse": [
       {
