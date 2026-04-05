@@ -3,3 +3,4 @@ node_modules/
 bun.lock
 *.wav
 *.mp3
+!voice-refs/*.mp3
