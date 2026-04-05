@@ -436,11 +436,24 @@ sys.exit(0)
 
 ## Step 5c: Voice Cloning (optional)
 
-Voice cloning requires a GPU-powered Qwen3-TTS API server. See the [Voice Cloning section in README](../README.md#voice-cloning-optional) for details.
+Voice cloning uses the Qwen3-TTS-12Hz-1.7B-Base model. Two inference paths:
 
-Add to `~/.claude/channels/discord/.env`:
+**Primary: Remote GPU server** (~6-10s)
 ```env
+# Add to ~/.claude/channels/discord/.env
 VOICE_CLONE_SERVER=http://YOUR_GPU_SERVER:8880
+```
+
+**Fallback: Local MLX** (~24-45s, Apple Silicon only)
+
+When the GPU server is unreachable, Claude asks the user before falling back to local inference. Pass `local=true` on `voice_play` to force it.
+
+Requires the model downloaded locally:
+```bash
+~/.venvs/qwen-tts/bin/python -c "
+from huggingface_hub import snapshot_download
+snapshot_download('mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16', local_dir='$HOME/.omlx/models/Qwen3-TTS-12Hz-1.7B-Base-bf16')
+"
 ```
 
 Reference audio clips go in `~/projects/voice-refs/` — use `voice_clone_create` tool to register new voices.
@@ -556,6 +569,7 @@ Voice/TTS behavior:
 - English speech → voice: en-US-GuyNeural
 - Korean speech → voice: ko-KR-InJoonNeural at 1.3x speed
 - Clone voices available: use clone="name" param on voice_play
+- If clone TTS fails with "GPU server unavailable" → ask user before retrying with local=true
 ```
 
 ---

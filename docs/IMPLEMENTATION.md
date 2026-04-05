@@ -215,7 +215,25 @@ When a text DM arrives while the voice watcher has timed out:
 
 1. `voice_play(clone="uncle_roger")` → calls `VOICE_CLONE_SERVER/generate` (pre-loaded voice, fastest)
 2. If the server returns 404 (voice not pre-loaded) → falls back to `/generate_custom` with the local ref audio from `~/projects/voice-refs/{name}.mp3`
-3. If no `clone` param → uses edge-tts as before (unchanged)
+3. If the GPU server is unreachable → throws descriptive error suggesting `local=true`
+4. `voice_play(clone="uncle_roger", local=true)` → skips GPU server, uses local MLX model directly
+5. If no `clone` param → uses edge-tts as before (unchanged)
+
+### Local MLX fallback (added 2026-04-06)
+
+When the GPU server is down (network error, timeout, server off), `generateTTS` throws an error message that tells Claude the local MLX fallback is available. Claude then asks the user whether to proceed with the slower local model. If confirmed, Claude retries with `local=true`.
+
+**`generateTTSLocal()`** runs:
+```bash
+~/.venvs/qwen-tts/bin/python -m mlx_audio.tts.generate \
+  --model ~/.omlx/models/Qwen3-TTS-12Hz-1.7B-Base-bf16 \
+  --text "..." --ref_audio ~/projects/voice-refs/{clone}.mp3 \
+  --file_prefix {VOICE_DIR}/tts-local-{timestamp}
+```
+
+- **Performance:** ~24s for short text (vs ~6-10s on GPU after warmup)
+- **Requires:** Apple Silicon Mac, `mlx_audio` in venv, Base model downloaded
+- **Params:** `--lang_code` and `--speed` passed through when set
 
 ### voice_clone_create tool
 
@@ -235,3 +253,11 @@ The TTS server splits long text into ~40-word chunks, generates each separately,
 - Deverbed vocal isolations work best for movie characters
 - Natural speaking voices clone well; extreme/processed voices (Gollum) don't
 - Korean ref audio requires `ref_text` (transcript of the reference)
+
+---
+
+## Part 6: TTS Audio Retention (added 2026-04-06)
+
+After `voice_play`, generated TTS audio files are copied to `{STATE_DIR}/recent-tts/` before the original is deleted. Files older than 24 hours are cleaned up automatically on each `voice_play` call.
+
+This allows sending audio clips to Discord DMs instantly (e.g. "send me that as a voice message") without regenerating them.
