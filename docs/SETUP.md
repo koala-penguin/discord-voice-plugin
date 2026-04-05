@@ -284,37 +284,101 @@ sys.exit(0)
       "mcp__discord-voice__voice_join",
       "mcp__discord-voice__voice_leave",
       "mcp__discord-voice__voice_play",
-      "mcp__discord-voice__voice_stop"
+      "mcp__discord-voice__voice_stop",
+      "mcp__discord-voice__voice_clone_create"
     ]
   },
   "hooks": {
     "SessionStart": [{
       "hooks": [{
         "type": "command",
-        "command": "sleep 10 && echo 'System: Join Discord voice channel now. Call mcp__discord-voice__voice_join with channel_id=VOICE_CHANNEL_ID guild_id=GUILD_ID text_channel_id=TEXT_CHANNEL_ID.' && exit 2",
+        "command": "sleep 10 && echo 'System: Join Discord voice channel now. Call mcp__discord-voice__voice_join with channel_id=VOICE_CHANNEL_ID guild_id=GUILD_ID text_channel_id=TEXT_CHANNEL_ID. After joining, immediately call voice_play with a short greeting to activate the voice listener loop.' && exit 2",
         "asyncRewake": true
       }]
     }],
-    "PostToolUse": [{
-      "matcher": "mcp__discord-voice__voice_play",
-      "hooks": [{
-        "type": "command",
-        "command": "python3 $HOME/.claude/channels/discord/voice-inbox-watcher.py",
-        "asyncRewake": true
-      }]
-    }],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__discord-voice__voice_play",
+        "hooks": [{
+          "type": "command",
+          "command": "python3 $HOME/.claude/channels/discord/voice-inbox-watcher.py",
+          "asyncRewake": true
+        }]
+      },
+      {
+        "matcher": "mcp__discord-voice__reply",
+        "hooks": [{
+          "type": "command",
+          "command": "python3 $HOME/.claude/channels/discord/voice-inbox-watcher.py",
+          "asyncRewake": true
+        }]
+      }
+    ],
     "Stop": [{
-      "hooks": [{
-        "type": "command",
-        "command": "python3 $HOME/.claude/channels/discord/voice-poll.py",
-        "asyncRewake": true
-      }]
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 $HOME/.claude/channels/discord/text-poll.py",
+          "asyncRewake": true
+        },
+        {
+          "type": "command",
+          "command": "python3 $HOME/.claude/channels/discord/voice-poll.py",
+          "asyncRewake": true
+        }
+      ]
     }]
   }
 }
 ```
 
 Replace `VOICE_CHANNEL_ID`, `GUILD_ID`, `TEXT_CHANNEL_ID` with your actual IDs.
+
+---
+
+## Step 5b: Text Message Delivery Script
+
+`~/.claude/channels/discord/text-poll.py` — delivers Discord text messages to Claude.
+
+```python
+#!/usr/bin/env python3
+import os, json, glob, sys
+
+inbox = os.path.join(os.path.expanduser('~'), '.claude', 'channels', 'discord', 'text-inbox')
+
+def deliver_first():
+    files = sorted(glob.glob(os.path.join(inbox, '*.json')))
+    if not files:
+        return False
+    try:
+        with open(files[0]) as f:
+            d = json.load(f)
+        os.remove(files[0])
+        att_attrs = ''
+        if d.get('attachment_count'):
+            att_attrs = ' attachment_count="{attachment_count}" attachments="{attachments}"'.format(**d)
+        print('<channel source="discord" chat_id="{chat_id}" message_id="{message_id}" user="{user}" ts="{ts}"{att}>{content}</channel>'.format(att=att_attrs, **d))
+        return True
+    except Exception:
+        return False
+
+if deliver_first():
+    sys.exit(2)
+sys.exit(0)
+```
+
+---
+
+## Step 5c: Voice Cloning (optional)
+
+Voice cloning requires a GPU-powered Qwen3-TTS API server. See the [Voice Cloning section in README](../README.md#voice-cloning-optional) for details.
+
+Add to `~/.claude/channels/discord/.env`:
+```env
+VOICE_CLONE_SERVER=http://YOUR_GPU_SERVER:8880
+```
+
+Reference audio clips go in `~/projects/voice-refs/` — use `voice_clone_create` tool to register new voices.
 
 ---
 
@@ -423,9 +487,10 @@ Add to your `CLAUDE.md` or system prompt so Claude responds correctly:
 ```
 Voice/TTS behavior:
 - source="voice" message → respond with voice_play only (no text reply)
-- Text/DM message → respond with text reply only (no voice)
+- source="discord" message → respond with text reply only (no voice)
 - English speech → voice: en-US-GuyNeural
 - Korean speech → voice: ko-KR-InJoonNeural at 1.3x speed
+- Clone voices available: use clone="name" param on voice_play
 ```
 
 ---

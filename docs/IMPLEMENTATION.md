@@ -1,5 +1,5 @@
-# Discord Voice Receive Fix — Implementation Notes
-_2026-04-05_
+# Discord Voice & Text Integration — Implementation Notes
+_2026-04-05, updated 2026-04-06_
 
 ## Problem
 
@@ -131,3 +131,94 @@ Claude receives voice turn
 If Claude has never called `voice_play` in this session (or the 10-min watcher timed out), there is no running background watcher. In this case, speak in the voice channel then type any message in text — the Stop hook will pick up the queued message on the next turn.
 
 To restart the loop manually, call `voice_play` with any text.
+
+The SessionStart hook now instructs Claude to call `voice_play` with a greeting immediately after joining voice, which eliminates this gap for new sessions.
+
+---
+
+## Part 4: Text Message Delivery (added 2026-04-06)
+
+The same MCP push notification problem affects Discord text messages (DMs and channel messages). The fix follows the identical pattern.
+
+### server.ts — Text Inbox Queue
+
+In `handleInbound()`, before the MCP notification, write to `text-inbox/`:
+
+```typescript
+const textInboxDir = join(STATE_DIR, 'text-inbox')
+mkdirSync(textInboxDir, { recursive: true })
+writeFileSync(join(textInboxDir, `${Date.now()}.json`), JSON.stringify({
+  content,
+  chat_id,
+  message_id: msg.id,
+  user: msg.author.username,
+  ts: msg.createdAt.toISOString(),
+  ...(atts.length > 0 ? { attachment_count: String(atts.length), attachments: atts.join('; ') } : {}),
+}))
+```
+
+### text-poll.py — Stop Hook
+
+`~/.claude/channels/discord/text-poll.py` — instant check of `text-inbox/`, no polling needed. Prints `<channel source="discord" ...>` tag.
+
+### voice-inbox-watcher.py — Updated
+
+The background watcher now checks **both** `text-inbox/` and `voice-inbox/` during its 10-minute poll loop. Text messages are checked first (higher priority — instant delivery).
+
+### PostToolUse — Reply Hook
+
+A second PostToolUse hook fires on `mcp__discord-voice__reply`, starting the same watcher. This ensures the loop continues after text replies, not just voice_play calls.
+
+### Updated hooks in settings.json
+
+```json
+"PostToolUse": [
+  {
+    "matcher": "mcp__discord-voice__voice_play",
+    "hooks": [{ "type": "command", "command": "python3 $HOME/.claude/channels/discord/voice-inbox-watcher.py", "asyncRewake": true }]
+  },
+  {
+    "matcher": "mcp__discord-voice__reply",
+    "hooks": [{ "type": "command", "command": "python3 $HOME/.claude/channels/discord/voice-inbox-watcher.py", "asyncRewake": true }]
+  }
+],
+"Stop": [{
+  "hooks": [
+    { "type": "command", "command": "python3 $HOME/.claude/channels/discord/text-poll.py", "asyncRewake": true },
+    { "type": "command", "command": "python3 $HOME/.claude/channels/discord/voice-poll.py", "asyncRewake": true }
+  ]
+}]
+```
+
+---
+
+## Part 5: Voice Cloning (added 2026-04-06)
+
+### Overview
+
+`voice_play` supports a `clone` parameter that routes TTS through a GPU-powered Qwen3-TTS server instead of edge-tts. This enables voice-cloned speech using pre-loaded or custom reference audio.
+
+### How it works
+
+1. `voice_play(clone="uncle_roger")` → calls `VOICE_CLONE_SERVER/generate` (pre-loaded voice, fastest)
+2. If the server returns 404 (voice not pre-loaded) → falls back to `/generate_custom` with the local ref audio from `~/projects/voice-refs/{name}.mp3`
+3. If no `clone` param → uses edge-tts as before (unchanged)
+
+### voice_clone_create tool
+
+Registers a new cloned voice:
+- From local file: `voice_clone_create(name="gandalf", file="/path/to/clip.mp3")`
+- From YouTube: `voice_clone_create(name="celebrity", url="https://youtube.com/watch?v=...")`
+
+Downloads/copies the ref audio to `~/projects/voice-refs/{name}.mp3`. Saves optional `ref_text` as `{name}.ref_text.txt` (required for Korean reference audio).
+
+### Server-side segmentation
+
+The TTS server splits long text into ~40-word chunks, generates each separately, and joins them with crossfade (50ms) + silence gaps (150ms). Exaggerated expressions (Haiyaa!, Fuiyoh!) are isolated into their own segments to prevent artifacts.
+
+### Voice reference tips
+
+- ~15 seconds of clean speech, no background music
+- Deverbed vocal isolations work best for movie characters
+- Natural speaking voices clone well; extreme/processed voices (Gollum) don't
+- Korean ref audio requires `ref_text` (transcript of the reference)
