@@ -1,0 +1,18 @@
+{
+  "name": "claude-channel-discord",
+  "version": "0.0.1",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": "./server.ts",
+  "scripts": {
+    "start": "bun install --no-summary && bun server.ts"
+  },
+  "dependencies": {
+    "@discordjs/opus": "^0.10.0",
+    "@discordjs/voice": "^0.19.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@snazzah/davey": "^0.1.10",
+    "discord.js": "^14.14.0",
+    "sodium-native": "^4.0.0"
+  }
+}
