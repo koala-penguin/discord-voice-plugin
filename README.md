@@ -14,7 +14,7 @@ A voice channel extension for [Claude Code](https://claude.ai/code) that works *
 | Tool | Description |
 |---|---|
 | `voice_join(channel_id, guild_id, text_channel_id)` | Join a voice channel and start listening |
-| `voice_play(guild_id, text?, voice?, clone?, lang?, speed?, file?)` | Speak TTS or play an audio file |
+| `voice_play(guild_id, text?, voice?, clone?, lang?, speed?, local?, file?)` | Speak TTS or play an audio file |
 | `voice_stop(guild_id)` | Stop currently playing audio |
 | `voice_leave(guild_id)` | Disconnect from voice channel |
 | `voice_clone_create(name, file?, url?, ref_text?)` | Register a new cloned voice from audio file or YouTube URL |
@@ -199,12 +199,14 @@ This plugin extends the official plugin — it does not replace it. Both must ru
 
 ## Voice Cloning (optional)
 
-> **Note:** Voice cloning requires a separate GPU-powered TTS server running the [Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) model. The server code is not included in this repo — it was built for a specific setup (RTX 4080 laptop serving over local network). To use voice cloning, you will need to either:
+> **Note:** Voice cloning is for personal/educational use only — it requires reference audio clips of the target voice.
 >
-> 1. **Set up your own Qwen3-TTS API server** that implements the `/generate` and `/generate_custom` endpoints (see the API spec in `docs/` or the [Qwen3-TTS documentation](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base))
-> 2. **Adapt the code in `server.ts`** (`generateTTS` function) to work with a different TTS backend that supports voice cloning (e.g. local MLX inference, Coqui TTS, or any other API)
+> Voice cloning uses the [Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) model. Two inference paths are supported:
 >
-> Without a clone server configured, edge-tts (the default) works for all standard TTS — no GPU needed.
+> 1. **Remote GPU server** (primary, ~6-10s) — Set `VOICE_CLONE_SERVER` to a Qwen3-TTS API server that implements `/generate` and `/generate_custom` endpoints
+> 2. **Local MLX** (fallback, ~24-45s, Apple Silicon only) — Uses `mlx_audio.tts.generate` with the model at `~/.omlx/models/Qwen3-TTS-12Hz-1.7B-Base-bf16`. When the GPU server is unreachable, Claude asks the user before falling back to the slower local model. Pass `local=true` on `voice_play` to force local inference.
+>
+> Without a clone server or local model configured, edge-tts (the default) works for all standard TTS — no GPU needed.
 
 Set `VOICE_CLONE_SERVER` in your `.env` to enable:
 
@@ -224,6 +226,27 @@ Register new voices with `voice_clone_create`:
 voice_clone_create(name="my_voice", file="/path/to/15sec-clip.mp3")
 voice_clone_create(name="celebrity", url="https://youtube.com/watch?v=...")
 ```
+
+---
+
+## Text Message Delivery
+
+Discord text messages (DMs and channel messages) are delivered via a file-based inbox queue, since MCP push notifications don't reliably trigger conversation turns in the CLI.
+
+Two watcher scripts handle delivery:
+
+- **`text-inbox-watcher.py`** — persistent, runs from SessionStart. Polls `text-inbox/` every 2 seconds indefinitely. Ensures text DMs are always delivered, even when away from the terminal.
+- **`voice-inbox-watcher.py`** — temporary (10 min timeout), started after each `voice_play` or `reply`. Polls `voice-inbox/` for speech transcriptions.
+
+Text DMs can reactivate the voice listener: a text message arrives → Claude replies → the PostToolUse hook restarts the voice watcher.
+
+See `hooks/` directory for the watcher scripts and `docs/SETUP.md` Step 5 for the settings.json hook configuration.
+
+---
+
+## TTS Audio Retention
+
+Generated TTS audio files are saved in `recent-tts/` for 24 hours. This allows sending audio clips to Discord DMs instantly without regenerating them. Files older than 1 day are cleaned up automatically on each voice_play call.
 
 ---
 
