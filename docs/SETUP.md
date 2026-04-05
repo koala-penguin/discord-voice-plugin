@@ -345,20 +345,22 @@ while True:
     ]
   },
   "hooks": {
-    "SessionStart": [{
-      "hooks": [
-        {
+    "SessionStart": [
+      {
+        "hooks": [{
           "type": "command",
           "command": "sleep 10 && echo 'System: Join Discord voice channel now. Call mcp__discord-voice__voice_join with channel_id=VOICE_CHANNEL_ID guild_id=GUILD_ID text_channel_id=TEXT_CHANNEL_ID. After joining, immediately call voice_play with a short greeting to activate the voice listener loop.' && exit 2",
           "asyncRewake": true
-        },
-        {
+        }]
+      },
+      {
+        "hooks": [{
           "type": "command",
           "command": "python3 $HOME/.claude/channels/discord/text-inbox-watcher.py",
           "asyncRewake": true
-        }
-      ]
-    }],
+        }]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "mcp__discord-voice__voice_play",

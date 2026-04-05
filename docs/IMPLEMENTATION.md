@@ -177,12 +177,14 @@ When a text DM arrives while the voice watcher has timed out:
 ### Updated hooks in settings.json
 
 ```json
-"SessionStart": [{
-  "hooks": [
-    { "type": "command", "command": "sleep 10 && echo '...' && exit 2", "asyncRewake": true },
-    { "type": "command", "command": "python3 $HOME/.claude/channels/discord/text-inbox-watcher.py", "asyncRewake": true }
-  ]
-}],
+"SessionStart": [
+  {
+    "hooks": [{ "type": "command", "command": "sleep 10 && echo '...' && exit 2", "asyncRewake": true }]
+  },
+  {
+    "hooks": [{ "type": "command", "command": "python3 $HOME/.claude/channels/discord/text-inbox-watcher.py", "asyncRewake": true }]
+  }
+],
 "PostToolUse": [
   {
     "matcher": "mcp__discord-voice__voice_play",
