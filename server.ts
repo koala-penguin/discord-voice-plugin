@@ -41,7 +41,7 @@ import {
   type AudioPlayer,
 } from '@discordjs/voice'
 import { randomBytes } from 'crypto'
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, createWriteStream, symlinkSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, createWriteStream, symlinkSync, copyFileSync } from 'fs'
 import { homedir } from 'os'
 import { join, sep } from 'path'
 import { spawn, execSync } from 'child_process'
@@ -915,7 +915,20 @@ async function handleVoicePlay(guildId: string, text: string, voice?: string, fi
   session.player.play(resource)
 
   await entersState(session.player, AudioPlayerStatus.Idle, 300_000).catch(() => {})
-  if (cleanup) rmSync(audioPath, { force: true })
+
+  // Keep a copy in recent-tts/ so it can be sent as a DM without regenerating
+  if (cleanup) {
+    const recentDir = join(STATE_DIR, 'recent-tts')
+    mkdirSync(recentDir, { recursive: true })
+    // Delete files older than 1 day
+    const cutoff = Date.now() - 86_400_000
+    for (const f of readdirSync(recentDir)) {
+      try { if (statSync(join(recentDir, f)).mtimeMs < cutoff) rmSync(join(recentDir, f), { force: true }) } catch {}
+    }
+    const ext = audioPath.endsWith('.wav') ? '.wav' : '.mp3'
+    copyFileSync(audioPath, join(recentDir, `${Date.now()}${ext}`))
+    rmSync(audioPath, { force: true })
+  }
 
   return filePath ? `Played audio file in voice channel.` : 'Played TTS in voice channel.'
 }
