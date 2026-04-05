@@ -14,9 +14,10 @@ A voice channel extension for [Claude Code](https://claude.ai/code) that works *
 | Tool | Description |
 |---|---|
 | `voice_join(channel_id, guild_id, text_channel_id)` | Join a voice channel and start listening |
-| `voice_play(guild_id, text?, voice?, file?)` | Speak TTS or play an audio file |
+| `voice_play(guild_id, text?, voice?, clone?, lang?, speed?, file?)` | Speak TTS or play an audio file |
 | `voice_stop(guild_id)` | Stop currently playing audio |
 | `voice_leave(guild_id)` | Disconnect from voice channel |
+| `voice_clone_create(name, file?, url?, ref_text?)` | Register a new cloned voice from audio file or YouTube URL |
 
 ---
 
@@ -144,6 +145,7 @@ All configuration is via environment variables. Add them to `~/.claude/channels/
 | `VOICE_AUTO_JOIN_CHANNEL` | *(unset)* | Voice channel ID to join automatically on startup |
 | `VOICE_AUTO_JOIN_GUILD` | *(unset)* | Guild ID for auto-join |
 | `VOICE_AUTO_JOIN_TEXT` | *(unset)* | Text channel ID for auto-join ASR notifications |
+| `VOICE_CLONE_SERVER` | *(unset)* | URL of a Qwen3-TTS API server for voice cloning (see below) |
 | `DISCORD_STATE_DIR` | `~/.claude/channels/discord` | Override state directory |
 | `DISCORD_ACCESS_MODE` | *(unset)* | Set to `static` to pin access.json at boot (disables pairing) |
 
@@ -192,6 +194,36 @@ This plugin extends the official plugin — it does not replace it. Both must ru
 | Text-to-speech in voice | ❌ | ✅ edge-tts (300+ voices) |
 | Direct audio file playback | ❌ | ✅ |
 | Auto-join voice on startup | ❌ | ✅ (via env vars) |
+
+---
+
+## Voice Cloning (optional)
+
+> **Note:** Voice cloning requires a separate GPU-powered TTS server running the [Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) model. The server code is not included in this repo — it was built for a specific setup (RTX 4080 laptop serving over local network). To use voice cloning, you will need to either:
+>
+> 1. **Set up your own Qwen3-TTS API server** that implements the `/generate` and `/generate_custom` endpoints (see the API spec in `docs/` or the [Qwen3-TTS documentation](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base))
+> 2. **Adapt the code in `server.ts`** (`generateTTS` function) to work with a different TTS backend that supports voice cloning (e.g. local MLX inference, Coqui TTS, or any other API)
+>
+> Without a clone server configured, edge-tts (the default) works for all standard TTS — no GPU needed.
+
+Set `VOICE_CLONE_SERVER` in your `.env` to enable:
+
+```env
+VOICE_CLONE_SERVER=http://192.168.1.100:8880
+```
+
+Then use the `clone` parameter on `voice_play`:
+
+```
+voice_play(guild_id="...", text="Hello!", clone="uncle_roger", lang="en")
+```
+
+Register new voices with `voice_clone_create`:
+
+```
+voice_clone_create(name="my_voice", file="/path/to/15sec-clip.mp3")
+voice_clone_create(name="celebrity", url="https://youtube.com/watch?v=...")
+```
 
 ---
 
