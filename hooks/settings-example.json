@@ -1,0 +1,105 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit",
+      "Read",
+      "Write",
+      "mcp__discord-voice__reply",
+      "mcp__discord-voice__react",
+      "mcp__discord-voice__download_attachment",
+      "mcp__discord-voice__edit_message",
+      "mcp__discord-voice__fetch_messages",
+      "mcp__discord-voice__voice_join",
+      "mcp__discord-voice__voice_leave",
+      "mcp__discord-voice__voice_play",
+      "mcp__discord-voice__voice_stop"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(sudo:*)",
+      "Bash(dd:*)",
+      "Bash(mkfs:*)",
+      "Bash(diskutil eraseDisk:*)",
+      "Bash(chmod -R 777:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(curl * | bash:*)",
+      "Bash(curl * | sh:*)",
+      "Bash(wget * | bash:*)",
+      "Bash(wget * | sh:*)",
+      "Bash(launchctl:*)"
+    ],
+    "ask": [
+      "Read(**/.env)",
+      "Edit(**/.env)",
+      "Write(**/.env)"
+    ]
+  },
+  "model": "opus",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$DISCORD\" ] && sleep 10 && echo 'System: Join Discord voice channel now. Call mcp__discord-voice__voice_join with channel_id=1486324986804306210 guild_id=1486324986367971378 text_channel_id=1486328251893678120. After joining, immediately call voice_play with a short greeting to activate the voice listener loop.' && exit 2",
+            "asyncRewake": true
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$DISCORD\" ] && python3 $HOME/.claude/channels/discord/text-inbox-watcher.py",
+            "asyncRewake": true
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__discord-voice__voice_play",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$DISCORD\" ] && python3 $HOME/.claude/channels/discord/voice-inbox-watcher.py",
+            "asyncRewake": true
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__discord-voice__reply",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$DISCORD\" ] && python3 $HOME/.claude/channels/discord/voice-inbox-watcher.py",
+            "asyncRewake": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$DISCORD\" ] && python3 $HOME/.claude/channels/discord/text-poll.py",
+            "asyncRewake": true
+          },
+          {
+            "type": "command",
+            "command": "[ -n \"$DISCORD\" ] && python3 $HOME/.claude/channels/discord/voice-poll.py",
+            "asyncRewake": true
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "fakechat@claude-plugins-official": false,
+    "discord@claude-plugins-official": false
+  },
+  "effortLevel": "high"
+}

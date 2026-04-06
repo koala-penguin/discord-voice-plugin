@@ -349,14 +349,14 @@ while True:
       {
         "hooks": [{
           "type": "command",
-          "command": "sleep 10 && echo 'System: Join Discord voice channel now. Call mcp__discord-voice__voice_join with channel_id=VOICE_CHANNEL_ID guild_id=GUILD_ID text_channel_id=TEXT_CHANNEL_ID. After joining, immediately call voice_play with a short greeting to activate the voice listener loop.' && exit 2",
+          "command": "[ -n \"$DISCORD\" ] && sleep 10 && echo 'System: Join Discord voice channel now. Call mcp__discord-voice__voice_join with channel_id=VOICE_CHANNEL_ID guild_id=GUILD_ID text_channel_id=TEXT_CHANNEL_ID. After joining, immediately call voice_play with a short greeting to activate the voice listener loop.' && exit 2",
           "asyncRewake": true
         }]
       },
       {
         "hooks": [{
           "type": "command",
-          "command": "python3 $HOME/.claude/channels/discord/text-inbox-watcher.py",
+          "command": "[ -n \"$DISCORD\" ] && python3 $HOME/.claude/channels/discord/text-inbox-watcher.py",
           "asyncRewake": true
         }]
       }
@@ -366,7 +366,7 @@ while True:
         "matcher": "mcp__discord-voice__voice_play",
         "hooks": [{
           "type": "command",
-          "command": "python3 $HOME/.claude/channels/discord/voice-inbox-watcher.py",
+          "command": "[ -n \"$DISCORD\" ] && python3 $HOME/.claude/channels/discord/voice-inbox-watcher.py",
           "asyncRewake": true
         }]
       },
@@ -374,7 +374,7 @@ while True:
         "matcher": "mcp__discord-voice__reply",
         "hooks": [{
           "type": "command",
-          "command": "python3 $HOME/.claude/channels/discord/voice-inbox-watcher.py",
+          "command": "[ -n \"$DISCORD\" ] && python3 $HOME/.claude/channels/discord/voice-inbox-watcher.py",
           "asyncRewake": true
         }]
       }
@@ -383,12 +383,12 @@ while True:
       "hooks": [
         {
           "type": "command",
-          "command": "python3 $HOME/.claude/channels/discord/text-poll.py",
+          "command": "[ -n \"$DISCORD\" ] && python3 $HOME/.claude/channels/discord/text-poll.py",
           "asyncRewake": true
         },
         {
           "type": "command",
-          "command": "python3 $HOME/.claude/channels/discord/voice-poll.py",
+          "command": "[ -n \"$DISCORD\" ] && python3 $HOME/.claude/channels/discord/voice-poll.py",
           "asyncRewake": true
         }
       ]
@@ -398,6 +398,8 @@ while True:
 ```
 
 Replace `VOICE_CHANNEL_ID`, `GUILD_ID`, `TEXT_CHANNEL_ID` with your actual IDs.
+
+> **Multi-session support:** All hooks are gated by `[ -n "$DISCORD" ]`. Only sessions started with `DISCORD=1 claude` will connect to Discord. Plain `claude` sessions skip all Discord hooks, so you can run multiple sessions without them fighting over the bot.
 
 ---
 

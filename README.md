@@ -115,8 +115,10 @@ Both plugins must be active. The `--channels` flag activates the official plugin
 
 ```bash
 cd ~/your-project
-claude --channels plugin:discord@claude-plugins-official
+DISCORD=1 claude --channels plugin:discord@claude-plugins-official
 ```
+
+> **Multi-session support:** The `DISCORD=1` env var gates all Discord hooks. Sessions without it skip voice auto-join and message watchers, so you can run multiple Claude Code sessions without them fighting over the bot. Only one session should use `DISCORD=1` at a time.
 
 ### 5. Pair your Discord account
 
