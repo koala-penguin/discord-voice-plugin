@@ -8,8 +8,21 @@ also running. No keepalive — voice-poll handles that.
 import os, json, glob, sys, time
 
 inbox = os.path.join(os.path.expanduser('~'), '.claude', 'channels', 'discord', 'text-inbox')
+PID_FILE = os.path.join(inbox, '00_tpoll.pid')
 
 POLL_SECS = 280
+
+# Kill previous instance to avoid accumulation
+os.makedirs(inbox, exist_ok=True)
+my_pid = os.getpid()
+try:
+    old_pid = int(open(PID_FILE).read().strip())
+    if old_pid != my_pid:
+        try: os.kill(old_pid, 9)
+        except: pass
+except: pass
+with open(PID_FILE, 'w') as f:
+    f.write(str(my_pid))
 
 def deliver_first():
     """Deliver the oldest message. Returns True if delivered."""

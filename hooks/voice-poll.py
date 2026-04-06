@@ -9,8 +9,21 @@ import os, json, glob, sys, time
 
 inbox = os.path.join(os.path.expanduser('~'), '.claude', 'channels', 'discord', 'voice-inbox')
 WAIT_FILE = os.path.join(inbox, '00_wait.json')
+PID_FILE = os.path.join(inbox, '00_vpoll.pid')
 
 POLL_SECS = 280  # just under the 300s idle timeout
+
+# Kill previous instance to avoid accumulation
+os.makedirs(inbox, exist_ok=True)
+my_pid = os.getpid()
+try:
+    old_pid = int(open(PID_FILE).read().strip())
+    if old_pid != my_pid:
+        try: os.kill(old_pid, 9)
+        except: pass
+except: pass
+with open(PID_FILE, 'w') as f:
+    f.write(str(my_pid))
 
 def write_wait_marker(seconds=280):
     os.makedirs(inbox, exist_ok=True)
