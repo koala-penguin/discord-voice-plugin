@@ -2,12 +2,14 @@
 """
 Stop hook: delivers queued Discord text messages to Claude via asyncRewake.
 
-Instant check only — no polling. Text messages don't need the extended
-polling that voice uses because they arrive as discrete events.
+Polls for up to 280s so text messages are caught even while voice-poll is
+also running. No keepalive — voice-poll handles that.
 """
-import os, json, glob, sys
+import os, json, glob, sys, time
 
 inbox = os.path.join(os.path.expanduser('~'), '.claude', 'channels', 'discord', 'text-inbox')
+
+POLL_SECS = 280
 
 def deliver_first():
     """Deliver the oldest message. Returns True if delivered."""
@@ -26,7 +28,15 @@ def deliver_first():
     except Exception:
         return False
 
+# Instant check
 if deliver_first():
     sys.exit(2)
 
+# Poll for messages
+for _ in range(POLL_SECS):
+    time.sleep(1)
+    if deliver_first():
+        sys.exit(2)
+
+# No keepalive here — voice-poll handles session keep-alive
 sys.exit(0)
